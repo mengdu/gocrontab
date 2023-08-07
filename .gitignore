@@ -1,0 +1,7 @@
+.idea
+.DS_Store
+vendor
+*.exe
+*.log
+main
+__debug_bin
