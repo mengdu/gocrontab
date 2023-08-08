@@ -1,0 +1,9 @@
+# hello
+* * * * * echo "Hello World!"
+# Print date
+* * * * * echo "Hi! at:$(date +%FT%T%z)"
+* * * * * echo "中文"
+* * * * * pwd
+
+# 0-4,20-30,*/5 * * * * ls -alh .
+0-4,20-30,*/2 * * * * ls -alh .
