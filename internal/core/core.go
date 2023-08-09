@@ -50,12 +50,13 @@ func (j *Job) Exec(isManual bool) {
 		j.Running = false
 		j.PrevUse = time.Since(start)
 	}()
-	mo.Debugf("Exec: %s, manual: %t", j.Cmd, isManual)
+	log := mo.WithTag(j.ID)
+	log.Debugf("Exec: %s, manual: %t", j.Cmd, isManual)
 	cmd := exec.Command("bash", "-c", j.Cmd)
 	cmd.Stderr = os.Stderr
 	cmd.Stdout = os.Stdout
 	if err := cmd.Start(); err != nil {
-		mo.Errorf("Error: %s", err)
+		log.Errorf("Error: %s", err)
 	}
 }
 

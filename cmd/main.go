@@ -15,27 +15,25 @@ var crontab = flag.String("crontab", "", "Crontab file path")
 
 func init() {
 	flag.Parse()
+	// init reset mo
 	mo.Std.Formater = &mo.TextForamter{
 		EnableLevel: true,
 		ShortLevel:  true,
 		// DisableLevelIcon: true,
 		EnableTime: true,
 	}
+	mo.Std.Tag = "CRON"
 	if *crontab == "" {
-		mo.Error("Pleace provide crontab file path")
-		os.Exit(1)
+		mo.Panicf("Pleace provide crontab file path")
 	}
 	crontabFile, err := filepath.Abs(*crontab)
 	if err != nil {
-		mo.Errorf("Error: %s", err)
-		os.Exit(1)
+		mo.Panicf("Error: %s", err)
 	}
 	if stat, err := os.Stat(crontabFile); os.IsNotExist(err) {
-		mo.Errorf("Not found crontab file: %s", crontabFile)
-		os.Exit(1)
+		mo.Panicf("Not found crontab file: %s", crontabFile)
 	} else if stat.IsDir() {
-		mo.Errorf("\"%s\" is not a crontab file", crontabFile)
-		os.Exit(1)
+		mo.Panicf("\"%s\" is not a crontab file", crontabFile)
 	}
 	mo.Infof("Crontab file: %s", crontabFile)
 	*crontab = crontabFile
@@ -44,13 +42,11 @@ func init() {
 func main() {
 	inject, err := injector.Build()
 	if err != nil {
-		mo.Errorf("Inject error: %s", err)
-		os.Exit(1)
+		mo.Panicf("Inject error: %s", err)
 	}
 
 	if err := inject.Manager.Start(*crontab); err != nil {
-		mo.Errorf("Start error: %s", err)
-		os.Exit(1)
+		mo.Panicf("Start error: %s", err)
 	}
 
 	mo.Success("Server start successfully")
@@ -58,8 +54,7 @@ func main() {
 	defer os.Remove(sock)
 	go func() {
 		if err := inject.Socket.Start(sock, inject.Manager); err != nil {
-			mo.Errorf("Socket start error: %s", err)
-			os.Exit(1)
+			mo.Panicf("Socket start error: %s", err)
 		}
 	}()
 	quit := make(chan os.Signal, 1)
