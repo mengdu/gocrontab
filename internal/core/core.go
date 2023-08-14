@@ -44,12 +44,12 @@ type Job struct {
 }
 
 func (j *Job) Exec(isManual bool) {
+	if j.Running {
+		mo.Errorf("Job %s is already running", j.ID)
+		return
+	}
 	j.Running = true
 	start := time.Now()
-	defer func() {
-		j.Running = false
-		j.PrevUse = time.Since(start)
-	}()
 	log := mo.WithTag(j.ID)
 	log.Debugf("Exec: %s, manual: %t", j.Cmd, isManual)
 	cmd := exec.Command("bash", "-c", j.Cmd)
@@ -58,6 +58,14 @@ func (j *Job) Exec(isManual bool) {
 	if err := cmd.Start(); err != nil {
 		log.Errorf("Error: %s", err)
 	}
+	go func() {
+		if err := cmd.Wait(); err != nil {
+			log.Errorf("Error: %s", err)
+		} else {
+			j.Running = false
+			j.PrevUse = time.Since(start)
+		}
+	}()
 }
 
 type Manager struct {
@@ -92,13 +100,17 @@ func (m *Manager) GetJobs() []Job {
 	return m.jobs
 }
 
-func (m *Manager) Exec(id string) {
+func (m *Manager) Exec(id string) error {
 	for i := 0; i < len(m.jobs); i++ {
 		if m.jobs[i].ID == id {
+			if m.jobs[i].Running {
+				return fmt.Errorf("Job is already running: %s", id)
+			}
 			m.jobs[i].Exec(true)
-			return
+			return nil
 		}
 	}
+	return fmt.Errorf("Job not found: %s", id)
 }
 
 func parseCrontab(file string) ([]Job, error) {

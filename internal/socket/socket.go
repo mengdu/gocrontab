@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"os"
+	"strings"
 
 	"github.com/google/wire"
 	"github.com/mengdu/gocrontab/internal/core"
@@ -22,55 +24,21 @@ var Set = wire.NewSet(New)
 type Server struct{}
 
 type Conn struct {
-	Writer *bufio.Writer
-	Data   []byte
+	net.Conn
+	Data []byte
 }
 
-func (c *Conn) Read(v any) error {
-	return json.Unmarshal(c.Data, v)
-}
-
-func (c *Conn) Write(msgType string, v any) error {
-	buf, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-	if _, err := c.Writer.Write([]byte(msgType + ":")); err != nil {
-		return err
-	}
-	if _, err := c.Writer.Write(buf); err != nil {
-		return err
-	}
-	if err := c.Writer.WriteByte('\n'); err != nil {
-		return err
-	}
-	if err := c.Writer.Flush(); err != nil {
-		return err
-	}
-	return nil
-}
-
-type EventHandler = func(c *Conn)
-
-type Event struct {
-	handlers map[string][]EventHandler
-}
-
-func (e *Event) On(msgType string, handler EventHandler) {
-	if e.handlers == nil {
-		e.handlers = make(map[string][]EventHandler)
-	}
-	e.handlers[msgType] = append(e.handlers[msgType], handler)
-}
-
-func (e *Event) Emit(msgType string, c *Conn) {
-	for _, handler := range e.handlers[msgType] {
-		handler(c)
-	}
-}
+type EventHandler = func(c Conn) ([]byte, error)
 
 type Socket struct {
-	Event
+	handlers map[string]EventHandler
+}
+
+func (e *Socket) On(msgType string, handler EventHandler) {
+	if e.handlers == nil {
+		e.handlers = make(map[string]EventHandler)
+	}
+	e.handlers[msgType] = handler
 }
 
 func (e *Socket) Listen(address string) error {
@@ -102,11 +70,41 @@ func (e *Socket) Listen(address string) error {
 					return
 				}
 				message = bytes.TrimRight(message, "\n")
-				args := bytes.SplitN(message, []byte(":"), 2)
-				e.Emit(string(args[0]), &Conn{
-					Writer: writer,
-					Data:   args[1],
+				args := bytes.SplitN(message, []byte("=>:"), 2)
+				if len(args) != 2 {
+					mo.Errorf("Invalid message: %s", message)
+					return
+				}
+				cmd := string(args[0])
+				mo.Debugf("Received: %s => %s", cmd, args[1])
+				handler, ok := e.handlers[cmd]
+				if !ok {
+					mo.Errorf("Unknown command: %s", cmd)
+					return
+				}
+				result, err := handler(Conn{
+					Conn: conn,
+					Data: args[1],
 				})
+				if err != nil {
+					mo.Errorf("Handler Error: %s", err)
+					return
+				}
+				if len(result) != 0 {
+					writer.Write([]byte(fmt.Sprintf("%s=>:", cmd)))
+					if _, err := writer.Write(result); err != nil {
+						mo.Errorf("Write Error: %s", err)
+						return
+					}
+					if err := writer.WriteByte('\n'); err != nil {
+						mo.Errorf("WriteByte Error: %s", err)
+						return
+					}
+					if err := writer.Flush(); err != nil {
+						mo.Errorf("Flush Error: %s", err)
+						return
+					}
+				}
 			}
 		}()
 	}
@@ -114,24 +112,20 @@ func (e *Socket) Listen(address string) error {
 
 func (s *Server) Start(address string, cron *core.Manager) error {
 	srv := &Socket{}
-	srv.On("ping", func(c *Conn) {
-		mo.Debugf(string(c.Data))
-		// jobs := cron.GetJobs()
-		// for i := 0; i < len(jobs); i++ {
-		// 	mo.Infof("Job: %#v", jobs[i])
-		// }
-		c.Write("pong", "hi!")
+	srv.On("ping", func(c Conn) ([]byte, error) {
+		return []byte("pong"), nil
 	})
-	srv.On("ls", func(c *Conn) {
-		c.Write("jobs", cron.GetJobs())
+
+	srv.On("ls", func(c Conn) ([]byte, error) {
+		return json.Marshal(cron.GetJobs())
 	})
-	srv.On("exec", func(c *Conn) {
-		id := ""
-		if err := c.Read(&id); err != nil {
-			mo.Errorf("Error: %s", err)
-			return
+
+	srv.On("exec", func(c Conn) ([]byte, error) {
+		err := cron.Exec(strings.Trim(string(c.Data), "\""))
+		if err != nil {
+			return []byte(fmt.Sprintf("%s", err)), nil
 		}
-		cron.Exec(id)
+		return []byte("ok"), nil
 	})
 
 	err := srv.Listen(address)

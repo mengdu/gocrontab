@@ -11,7 +11,7 @@ import (
 	"github.com/mengdu/mo"
 )
 
-var crontab = flag.String("crontab", "", "Crontab file path")
+var crontab = flag.String("c", "", "Crontab file path")
 
 func init() {
 	flag.Parse()
