@@ -9,26 +9,26 @@ package injector
 import (
 	"github.com/google/wire"
 	"github.com/mengdu/gocrontab/internal/core"
-	"github.com/mengdu/gocrontab/internal/socket"
+	"github.com/mengdu/gocrontab/internal/server"
 )
 
 // Injectors from wire.go:
 
 func Build() (*Injector, error) {
 	manager := core.New()
-	server := socket.New()
+	serverServer := server.New()
 	injector := &Injector{
 		Manager: manager,
-		Socket:  server,
+		Server:  serverServer,
 	}
 	return injector, nil
 }
 
 // wire.go:
 
-var set = wire.NewSet(wire.Struct(new(Injector), "*"), core.Set, socket.Set)
+var set = wire.NewSet(wire.Struct(new(Injector), "*"), core.Set, server.Set)
 
 type Injector struct {
 	Manager *core.Manager
-	Socket  *socket.Server
+	Server  *server.Server
 }

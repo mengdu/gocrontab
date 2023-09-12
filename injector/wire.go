@@ -6,18 +6,18 @@ package injector
 import (
 	"github.com/google/wire"
 	"github.com/mengdu/gocrontab/internal/core"
-	"github.com/mengdu/gocrontab/internal/socket"
+	"github.com/mengdu/gocrontab/internal/server"
 )
 
 var set = wire.NewSet(
 	wire.Struct(new(Injector), "*"),
 	core.Set,
-	socket.Set,
+	server.Set,
 )
 
 type Injector struct {
 	Manager *core.Manager
-	Socket  *socket.Server
+	Server  *server.Server
 }
 
 func Build() (*Injector, error) {

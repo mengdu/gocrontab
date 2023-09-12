@@ -22,9 +22,9 @@ func init() {
 		// DisableLevelIcon: true,
 		EnableTime: true,
 	}
-	mo.Std.Tag = "CRON"
+	// mo.Std.Tag = "CRON"
 	if *crontab == "" {
-		mo.Panicf("Pleace provide crontab file path")
+		mo.Panicf("Please specify a task configuration file through the '-c' parameter")
 	}
 	crontabFile, err := filepath.Abs(*crontab)
 	if err != nil {
@@ -49,14 +49,15 @@ func main() {
 		mo.Panicf("Start error: %s", err)
 	}
 
-	mo.Success("Server start successfully")
 	sock := "/tmp/gocrond.sock"
 	defer os.Remove(sock)
 	go func() {
-		if err := inject.Socket.Start(sock, inject.Manager); err != nil {
+		if err := inject.Server.Start(sock, inject.Manager); err != nil {
 			mo.Panicf("Socket start error: %s", err)
 		}
 	}()
+	mo.Success("Server start successfully")
+	mo.Infof("Process pid: %d, ppid: %d", os.Getpid(), os.Getppid())
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit

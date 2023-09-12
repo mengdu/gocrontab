@@ -1,93 +1,86 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
+	"hash/fnv"
+	"io/ioutil"
 	"net"
-	"os"
-	"os/signal"
-	"syscall"
+	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/mengdu/gocrontab/internal/core"
 	"github.com/mengdu/mo"
-	"github.com/olekukonko/tablewriter"
 )
 
-type EventHandler = func(msg []byte)
-
-type Event struct {
-	handlers map[string][]EventHandler
+func color(s string, start string, end string) string {
+	s = strings.ReplaceAll(s, "\u001b[39m", fmt.Sprintf("\u001b[39m\u001b[%sm", start))
+	return fmt.Sprintf("\u001b[%sm%s\u001b[%sm", start, s, end)
 }
 
-func (e *Event) On(msgType string, handler EventHandler) {
-	if e.handlers == nil {
-		e.handlers = make(map[string][]EventHandler)
-	}
-	e.handlers[msgType] = append(e.handlers[msgType], handler)
+func strHashCode(str string) uint32 {
+	h := fnv.New32a()
+	h.Write([]byte(str))
+	min := 1
+	max := 231
+	size := max - min + 1
+	hashValue := h.Sum32()
+	return hashValue%uint32(size) + uint32(min)
 }
 
-func (e *Event) Emit(msgType string, msg []byte) {
-	for _, handler := range e.handlers[msgType] {
-		handler(msg)
-	}
+type HClient struct {
+	Client http.Client
 }
 
-type Client struct {
-	Event
-	writer *bufio.Writer
-}
-
-func (e *Client) Dial(address string) (net.Conn, error) {
-	conn, err := net.Dial("unix", address)
-	if err != nil {
-		return conn, err
-	}
-
-	reader := bufio.NewReader(conn)
-	writer := bufio.NewWriter(conn)
-	e.writer = writer
-
-	go func() {
-		for {
-			message, err := reader.ReadBytes('\n')
-			if err != nil {
-				if err == io.EOF {
-					e.Emit("error", []byte("Connection closed by client"))
-					return
-				}
-				e.Emit("error", []byte("Failed to read message: "+err.Error()))
-				return
-			}
-			message = bytes.TrimRight(message, "\n")
-			args := bytes.SplitN(message, []byte("=>:"), 2)
-			e.Emit(string(args[0]), args[1])
+func (c *HClient) Get(path string, query url.Values) (res *http.Response, body []byte, err error) {
+	url := fmt.Sprintf("http://localhost%s", path)
+	if len(query) > 0 {
+		querystr := query.Encode()
+		if querystr != "" {
+			url = fmt.Sprintf("%s?%s", url, querystr)
 		}
-	}()
-	return conn, nil
+	}
+	res, err = c.Client.Get(url)
+	if err != nil {
+		return
+	}
+	defer res.Body.Close()
+	body, err = ioutil.ReadAll(res.Body)
+	return
 }
 
-func (e *Client) Send(msgType string, v any) error {
-	buf, err := json.Marshal(v)
+func (c *HClient) Post(path string, query url.Values, payload interface{}) (res *http.Response, body []byte, err error) {
+	url := fmt.Sprintf("http://localhost%s", path)
+	if len(query) > 0 {
+		querystr := query.Encode()
+		if querystr != "" {
+			url = fmt.Sprintf("%s?%s", url, querystr)
+		}
+	}
+
+	buf, err := json.Marshal(payload)
 	if err != nil {
-		return err
+		return
 	}
-	if _, err := e.writer.Write([]byte(msgType + "=>:")); err != nil {
-		return err
+	res, err = c.Client.Post(url, "application/json", bytes.NewReader(buf))
+	if err != nil {
+		return
 	}
-	if _, err := e.writer.Write(buf); err != nil {
-		return err
-	}
-	if err := e.writer.WriteByte('\n'); err != nil {
-		return err
-	}
-	if err := e.writer.Flush(); err != nil {
-		return err
-	}
-	return nil
+	body, err = ioutil.ReadAll(res.Body)
+	return
+}
+
+type Response struct {
+	Ret int    `json:"ret"`
+	Msg string `json:"msg"`
+}
+
+type LsRes struct {
+	Response
+	List []core.Job `json:"list"`
 }
 
 func main() {
@@ -97,66 +90,77 @@ func main() {
 	args := flag.Args()
 	if len(args) == 0 {
 		flag.Usage()
+		return
 	}
-	e := Client{}
-	e.On("ping", func(msg []byte) {
-		mo.Debug(string(msg))
-		os.Exit(0)
-	})
 
-	e.On("ls", func(msg []byte) {
-		list := []core.Job{}
-		if err := json.Unmarshal(msg, &list); err != nil {
-			mo.Panicf("Error: %s", err)
-		}
-		// for _, item := range list {
-		// 	mo.Infof("%t %s %s %s %s", item.Running, item.Spec, item.ID, item.Cmd, item.Title)
-		// }
-		mo.Infof("Total %d jobs", len(list))
-		table := tablewriter.NewWriter(os.Stdout)
-		table.SetRowLine(true)
-		table.SetHeader([]string{"ID", "Spec", "Running", "Title"})
-		for _, item := range list {
-			table.Append([]string{item.ID, item.Spec, fmt.Sprintf("%t", item.Running), item.Title})
-		}
-		table.Render()
-		os.Exit(0)
-	})
-
-	e.On("exec", func(msg []byte) {
-		if string(msg) != "ok" {
-			mo.Errorf("%s", msg)
-			os.Exit(1)
-		}
-		mo.Successf("Executing ok")
-		os.Exit(0)
-	})
-
-	conn, err := e.Dial(*sock)
-	if err != nil {
-		mo.Errorf("Error: %s", err)
-		os.Exit(1)
+	client := &HClient{
+		Client: http.Client{
+			Transport: &http.Transport{
+				Dial: func(network, addr string) (net.Conn, error) {
+					// mo.Log(network, addr)
+					return net.Dial("unix", *sock)
+				},
+			},
+		},
 	}
-	defer conn.Close()
 
 	switch args[0] {
 	case "ping":
-		e.Send("ping", nil)
+		_, body, err := client.Get("/ping", nil)
+		if err != nil {
+			mo.Panic(err)
+		}
+		mo.Info(string(body))
 	case "ls":
-		e.Send("ls", nil)
+		_, body, err := client.Get("/ls", nil)
+		if err != nil {
+			mo.Panic(err)
+		}
+
+		res := LsRes{}
+		err = json.Unmarshal(body, &res)
+		if err != nil {
+			mo.Panic(err)
+		}
+		if res.Ret != 0 {
+			mo.Panicf("Error %s", res.Msg)
+		}
+		for i, v := range res.List {
+			state := ""
+			if v.Running {
+				pid := color(fmt.Sprintf("%d", v.Pid), "34", "39")
+				state = color(fmt.Sprintf("[Running, pid:%s]", pid), "32", "39")
+			} else {
+				state = color("[Waiting]", "2;37", "0;39")
+			}
+			index := color(fmt.Sprintf("%d", i+1), "32", "39")
+			id := color(v.ID, fmt.Sprintf("38;5;%d", strHashCode(v.ID)), "39")
+			runCnt := color(fmt.Sprintf("- Run %d times", v.RunCnt), "2", "22;0;39")
+			fmt.Printf("%s %s %s %s %s %s %s\n", index, id, color(v.Spec, "2", "22;0;39"), color(v.Cmd, "33", "39"), state, color(v.Title, "2", "22;0;39"), runCnt)
+		}
 	case "exec":
 		subCommand.Parse(args[1:])
 		subArgs := subCommand.Args()
-		if len(subArgs) == 0 {
-			mo.Panic("Must provide id")
+		_, body, err := client.Post("/exec", nil, subArgs[0])
+		if err != nil {
+			mo.Panic(err)
 		}
-		e.Send("exec", subArgs[0])
+		res := Response{}
+		err = json.Unmarshal(body, &res)
+		if err != nil {
+			mo.Panic(err)
+		}
+		if res.Ret != 0 {
+			mo.Error(res.Msg)
+		} else {
+			mo.Successf("%s", res.Msg)
+		}
 	default:
 		mo.Panicf("Unknown command: %s", args[0])
 	}
 
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
-	mo.Info("Shutdown Server ...")
+	// quit := make(chan os.Signal, 1)
+	// signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	// <-quit
+	// mo.Info("Shutdown Server ...")
 }

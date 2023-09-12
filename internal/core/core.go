@@ -25,20 +25,14 @@ func New() *Manager {
 
 var Set = wire.NewSet(New)
 
-// func parseLine(line string) []string {
-// 	args := strings.Fields(strings.TrimSpace(line))
-// 	for i := 0; i < len(args); i++ {
-// 		args[i] = strings.Trim(args[i], "\"")
-// 	}
-// 	return args
-// }
-
 type Job struct {
 	ID      string        `json:"id"`
 	Title   string        `json:"title"`
 	Spec    string        `json:"spec"`
 	Cmd     string        `json:"cmd"`
 	Running bool          `json:"running"`
+	Pid     int           `json:"pid"`
+	RunCnt  int           `json:"run_cnt"`
 	PrevUse time.Duration `json:"prev_use"`
 	cronId  cron.EntryID
 }
@@ -49,9 +43,10 @@ func (j *Job) Exec(isManual bool) {
 		return
 	}
 	j.Running = true
+	j.RunCnt++
 	start := time.Now()
 	log := mo.WithTag(j.ID)
-	log.Debugf("Exec: %s, manual: %t", j.Cmd, isManual)
+	log.Logf("Exec: %s, manual: %t", j.Cmd, isManual)
 	cmd := exec.Command("bash", "-c", j.Cmd)
 	cmd.Stderr = os.Stderr
 	cmd.Stdout = os.Stdout
@@ -59,10 +54,12 @@ func (j *Job) Exec(isManual bool) {
 		log.Errorf("Error: %s", err)
 	}
 	go func() {
+		j.Pid = cmd.Process.Pid
 		if err := cmd.Wait(); err != nil {
 			log.Errorf("Error: %s", err)
 		} else {
 			j.Running = false
+			j.Pid = 0
 			j.PrevUse = time.Since(start)
 		}
 	}()
@@ -78,9 +75,10 @@ func (m *Manager) Start(file string) error {
 	if err != nil {
 		return err
 	}
+	m.jobs = jobs
 	// mo.Infof("Jobs: %v", jobs)
 	for i := 0; i < len(jobs); i++ {
-		job := jobs[i]
+		job := &jobs[i]
 		id, err := m.cron.AddFunc(job.Spec, func() {
 			job.Exec(false)
 		})
@@ -92,7 +90,6 @@ func (m *Manager) Start(file string) error {
 	}
 	m.cron.Start()
 	mo.Infof("Initiated %d jobs", len(jobs))
-	m.jobs = jobs
 	return nil
 }
 
@@ -104,7 +101,7 @@ func (m *Manager) Exec(id string) error {
 	for i := 0; i < len(m.jobs); i++ {
 		if m.jobs[i].ID == id {
 			if m.jobs[i].Running {
-				return fmt.Errorf("Job is already running: %s", id)
+				return fmt.Errorf("`%s` job is already running", id)
 			}
 			m.jobs[i].Exec(true)
 			return nil
@@ -139,8 +136,9 @@ func parseCrontab(file string) ([]Job, error) {
 			script := strings.TrimSpace(matches[3])
 			index++
 			hash := md5.Sum([]byte(fmt.Sprintf("%d:%s", index, line)))
+			id := hex.EncodeToString(hash[:])
 			arr = append(arr, Job{
-				ID:    hex.EncodeToString(hash[:]),
+				ID:    id[len(id)-6:],
 				Title: title,
 				Spec:  spec,
 				Cmd:   script,
