@@ -1,13 +1,14 @@
 package core
 
 import (
+	"bytes"
 	"crypto/md5"
 	"encoding/hex"
 	"fmt"
 	"io/ioutil"
-	"os"
 	"os/exec"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 
@@ -37,6 +38,15 @@ type Job struct {
 	cronId  cron.EntryID
 }
 
+type LWrite struct {
+	Log func(log []byte)
+}
+
+func (w *LWrite) Write(c []byte) (n int, err error) {
+	w.Log(bytes.TrimRight(c, "\n"))
+	return len(c), nil
+}
+
 func (j *Job) Exec(isManual bool) {
 	if j.Running {
 		mo.Errorf("Job %s is already running", j.ID)
@@ -46,10 +56,19 @@ func (j *Job) Exec(isManual bool) {
 	j.RunCnt++
 	start := time.Now()
 	log := mo.WithTag(j.ID)
-	log.Logf("Exec: %s, manual: %t", j.Cmd, isManual)
-	cmd := exec.Command("bash", "-c", j.Cmd)
-	cmd.Stderr = os.Stderr
-	cmd.Stdout = os.Stdout
+	log.Logf("Start exec %s, manual: %t, times: %d", j.Cmd, isManual, j.RunCnt)
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		cmd = exec.Command("cmd.exe", "/C", j.Cmd)
+	} else {
+		cmd = exec.Command("bash", "-c", j.Cmd)
+	}
+	cmd.Stderr = &LWrite{Log: func(msg []byte) {
+		log.Error(string(msg))
+	}}
+	cmd.Stdout = &LWrite{Log: func(msg []byte) {
+		log.Log(string(msg))
+	}}
 	if err := cmd.Start(); err != nil {
 		log.Errorf("Error: %s", err)
 	}
@@ -62,6 +81,7 @@ func (j *Job) Exec(isManual bool) {
 			j.Pid = 0
 			j.PrevUse = time.Since(start)
 		}
+		log.Logf("Exec finish, use %s", j.PrevUse)
 	}()
 }
 
