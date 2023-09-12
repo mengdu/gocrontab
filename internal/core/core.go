@@ -75,12 +75,11 @@ func (j *Job) Exec(isManual bool) {
 	go func() {
 		j.Pid = cmd.Process.Pid
 		if err := cmd.Wait(); err != nil {
-			log.Errorf("Error: %s", err)
-		} else {
-			j.Running = false
-			j.Pid = 0
-			j.PrevUse = time.Since(start)
+			log.Error(err)
 		}
+		j.Running = false
+		j.Pid = 0
+		j.PrevUse = time.Since(start)
 		log.Logf("Exec finish, use %s", j.PrevUse)
 	}()
 }
