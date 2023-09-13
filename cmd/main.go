@@ -4,6 +4,7 @@ import (
 	"flag"
 	"os"
 	"os/signal"
+	"os/user"
 	"path/filepath"
 	"syscall"
 
@@ -12,6 +13,8 @@ import (
 )
 
 var crontab = flag.String("c", "", "Crontab file path")
+var sockFile = flag.String("sock", "", "Socket file")
+var debug = flag.Bool("debug", false, "Debug mode")
 
 func init() {
 	flag.Parse()
@@ -22,7 +25,11 @@ func init() {
 		// DisableLevelIcon: true,
 		EnableTime: true,
 	}
-	// mo.Std.Tag = "CRON"
+	if *debug {
+		mo.Std.Level = mo.LEVEL_DEBUG
+	} else {
+		mo.Std.Level = mo.LEVEL_SUCCESS
+	}
 	if *crontab == "" {
 		mo.Panicf("Please specify a task configuration file through the '-c' parameter")
 	}
@@ -49,7 +56,17 @@ func main() {
 		mo.Panicf("Start error: %s", err)
 	}
 
-	sock := "/tmp/gocrond.sock"
+	sock := ""
+	if *sockFile == "" {
+		usr, err := user.Current()
+		if err != nil {
+			mo.Panic(err)
+		}
+		sock = filepath.Join(usr.HomeDir, "gocrond.sock")
+	} else {
+		sock = *sockFile
+	}
+
 	defer os.Remove(sock)
 	go func() {
 		if err := inject.Server.Start(sock, inject.Manager); err != nil {

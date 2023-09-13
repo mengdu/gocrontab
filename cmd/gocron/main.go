@@ -10,9 +10,11 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os/user"
+	"path/filepath"
 	"strings"
+	"time"
 
-	"github.com/mengdu/gocrontab/internal/core"
 	"github.com/mengdu/mo"
 )
 
@@ -29,6 +31,17 @@ func strHashCode(str string) uint32 {
 	size := max - min + 1
 	hashValue := h.Sum32()
 	return hashValue%uint32(size) + uint32(min)
+}
+
+type Job struct {
+	ID      string        `json:"id"`
+	Title   string        `json:"title"`
+	Spec    string        `json:"spec"`
+	Cmd     string        `json:"cmd"`
+	Running bool          `json:"running"`
+	Pid     int           `json:"pid"`
+	RunCnt  int           `json:"run_cnt"`
+	PrevUse time.Duration `json:"prev_use"`
 }
 
 type HClient struct {
@@ -80,11 +93,15 @@ type Response struct {
 
 type LsRes struct {
 	Response
-	List []core.Job `json:"list"`
+	List []Job `json:"list"`
+	Info struct {
+		File    string    `json:"file"`
+		StartAt time.Time `json:"start_at"`
+	} `json:"info"`
 }
 
 func main() {
-	sock := flag.String("sock", "/tmp/gocrond.sock", "Socket file")
+	sockFile := flag.String("sock", "", "Socket file")
 	subCommand := flag.NewFlagSet("sub", flag.ExitOnError)
 	flag.Parse()
 	args := flag.Args()
@@ -93,12 +110,23 @@ func main() {
 		return
 	}
 
+	sock := ""
+	if *sockFile == "" {
+		usr, err := user.Current()
+		if err != nil {
+			mo.Panic(err)
+		}
+		sock = filepath.Join(usr.HomeDir, "gocrond.sock")
+	} else {
+		sock = *sockFile
+	}
+
 	client := &HClient{
 		Client: http.Client{
 			Transport: &http.Transport{
 				Dial: func(network, addr string) (net.Conn, error) {
 					// mo.Log(network, addr)
-					return net.Dial("unix", *sock)
+					return net.Dial("unix", sock)
 				},
 			},
 		},
@@ -125,6 +153,8 @@ func main() {
 		if res.Ret != 0 {
 			mo.Panicf("Error %s", res.Msg)
 		}
+
+		fmt.Printf("Total %s jobs\n", color(fmt.Sprintf("%d", len(res.List)), "34", "39"))
 		for i, v := range res.List {
 			state := ""
 			if v.Running {
@@ -138,6 +168,7 @@ func main() {
 			runCnt := color(fmt.Sprintf("- Run %d times", v.RunCnt), "2", "22;0;39")
 			fmt.Printf("%s %s %s %s %s %s %s\n", index, id, color(v.Spec, "2", "22;0;39"), color(v.Cmd, "33", "39"), state, color(v.Title, "2", "22;0;39"), runCnt)
 		}
+		fmt.Printf("\nCron file: %s\nStart at: %s\n", color(res.Info.File, "2", "22;0;39"), color(res.Info.StartAt.Format(time.RFC3339), "90", "39"))
 	case "exec":
 		subCommand.Parse(args[1:])
 		subArgs := subCommand.Args()
