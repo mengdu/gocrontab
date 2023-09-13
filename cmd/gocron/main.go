@@ -155,6 +155,7 @@ func main() {
 		}
 
 		fmt.Printf("Total %s jobs\n", color(fmt.Sprintf("%d", len(res.List)), "34", "39"))
+		fmt.Printf("%-3s %-8s %s\n", "No", "Id", "Cron")
 		for i, v := range res.List {
 			state := ""
 			if v.Running {
@@ -163,12 +164,12 @@ func main() {
 			} else {
 				state = color("[Waiting]", "2;37", "0;39")
 			}
-			index := color(fmt.Sprintf("%d", i+1), "32", "39")
-			id := color(v.ID, fmt.Sprintf("38;5;%d", strHashCode(v.ID)), "39")
+			index := color(fmt.Sprintf("%-3d", i+1), "32", "39")
+			id := color(fmt.Sprintf("%-8s", v.ID), fmt.Sprintf("38;5;%d", strHashCode(v.ID)), "39")
 			runCnt := color(fmt.Sprintf("- Run %d times", v.RunCnt), "2", "22;0;39")
 			fmt.Printf("%s %s %s %s %s %s %s\n", index, id, color(v.Spec, "2", "22;0;39"), color(v.Cmd, "33", "39"), state, color(v.Title, "2", "22;0;39"), runCnt)
 		}
-		fmt.Printf("\nCron file: %s\nStart at: %s\n", color(res.Info.File, "2", "22;0;39"), color(res.Info.StartAt.Format(time.RFC3339), "90", "39"))
+		fmt.Print(color(fmt.Sprintf("\nCron file: %s\nStart at: %s\n", res.Info.File, res.Info.StartAt.Format(time.RFC3339)), "2", "22;0;39"))
 	case "exec":
 		subCommand.Parse(args[1:])
 		subArgs := subCommand.Args()
