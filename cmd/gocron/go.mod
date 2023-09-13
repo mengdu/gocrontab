@@ -1,4 +1,4 @@
-module github.com/mengdu/gocrontab/cmd/gocron
+module github.com/mengdu/gocrontab/cmd/gocronx
 
 go 1.18
 
