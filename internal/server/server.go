@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/google/wire"
 	"github.com/mengdu/gocrontab/internal/core"
@@ -18,6 +19,7 @@ func New() *Server {
 }
 
 var Set = wire.NewSet(New)
+var startAt = time.Now()
 
 type Server struct{}
 
@@ -33,6 +35,10 @@ func (s *Server) Start(address string, cron *core.Manager) error {
 			"ret":  0,
 			"msg":  "ok",
 			"list": cron.GetJobs(),
+			"info": map[string]interface{}{
+				"file":     cron.GetCronFile(),
+				"start_at": startAt,
+			},
 		})
 		if err != nil {
 			mo.Error(err)

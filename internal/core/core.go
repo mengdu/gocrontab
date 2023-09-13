@@ -85,8 +85,9 @@ func (j *Job) Exec(isManual bool) {
 }
 
 type Manager struct {
-	cron *cron.Cron
-	jobs []Job
+	cron     *cron.Cron
+	jobs     []Job
+	cronFile string
 }
 
 func (m *Manager) Start(file string) error {
@@ -94,6 +95,7 @@ func (m *Manager) Start(file string) error {
 	if err != nil {
 		return err
 	}
+	m.cronFile = file
 	m.jobs = jobs
 	// mo.Infof("Jobs: %v", jobs)
 	for i := 0; i < len(jobs); i++ {
@@ -127,6 +129,10 @@ func (m *Manager) Exec(id string) error {
 		}
 	}
 	return fmt.Errorf("Job not found: %s", id)
+}
+
+func (m *Manager) GetCronFile() string {
+	return m.cronFile
 }
 
 func parseCrontab(file string) ([]Job, error) {
