@@ -5,8 +5,8 @@ Timed task management similar to Linux crond
 ## Install
 
 ```sh
-go intall github.com/mengdu/gocrontab/cmd/gocrond@xxx
-go intall github.com/mengdu/gocrontab/cmd/gocron@xxx
+go install github.com/mengdu/gocrontab/cmd/gocrond@xxx
+go install github.com/mengdu/gocrontab/cmd/gocron@xxx
 ```
 
 ## Usage
