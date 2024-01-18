@@ -1,17 +1,16 @@
 package server
 
 import (
-	"encoding/json"
+	"errors"
 	"fmt"
-	"io/ioutil"
 	"net"
 	"net/http"
-	"strings"
+	"os"
+	"syscall"
 	"time"
 
 	"github.com/google/wire"
 	"github.com/mengdu/gocrontab/internal/core"
-	"github.com/mengdu/mo"
 )
 
 func New() *Server {
@@ -24,67 +23,35 @@ var startAt = time.Now()
 type Server struct{}
 
 func (s *Server) Start(address string, cron *core.Manager) error {
-	handler := &MyHandler{}
-	handler.Get("/ping", func(w http.ResponseWriter, req *http.Request) {
-		w.Write([]byte("Pong"))
-	})
-
-	handler.Get("/ls", func(w http.ResponseWriter, req *http.Request) {
-		w.Header().Add("Content-Type", "application/json")
-		buf, err := json.Marshal(map[string]interface{}{
-			"ret":  0,
-			"msg":  "ok",
-			"list": cron.GetJobs(),
-			"info": map[string]interface{}{
-				"file":     cron.GetCronFile(),
-				"start_at": startAt,
-			},
-		})
-		if err != nil {
-			mo.Error(err)
-			buf, _ := json.Marshal(map[string]interface{}{
-				"ret": -1,
-				"msg": err.Error(),
-			})
-			w.Write(buf)
-			return
-		}
-		w.Write(buf)
-	})
-
-	handler.Post("/exec", func(w http.ResponseWriter, req *http.Request) {
-		data, err := ioutil.ReadAll(req.Body)
-		if err != nil {
-			mo.Error(err)
-		}
-		cid := strings.Trim(string(data), "\"")
-		if cid == "" {
-			buf, _ := json.Marshal(map[string]interface{}{
-				"ret": 1,
-				"msg": "params error",
-			})
-			w.Write(buf)
-			return
-		}
-		err = cron.Exec(cid)
-		if err != nil {
-			buf, _ := json.Marshal(map[string]interface{}{
-				"ret": -1,
-				"msg": err.Error(),
-			})
-			w.Write(buf)
-			return
-		}
-		buf, _ := json.Marshal(map[string]interface{}{
-			"ret": 0,
-			"msg": "ok",
-		})
-		w.Write(buf)
-	})
-
+	handler := createHandler(cron)
 	listener, err := net.Listen("unix", address)
 	if err != nil {
-		return err
+		opErr, ok := err.(*net.OpError)
+		if ok && opErr.Op == "listen" && opErr.Net == "unix" && errors.Is(opErr.Err, syscall.EADDRINUSE) {
+			conn, err2 := net.Dial("unix", address)
+			if err2 != nil {
+				if errors.Is(err2, syscall.ECONNREFUSED) || errors.Is(err2, syscall.ENOENT) {
+					if err := os.Remove(address); err != nil {
+						fmt.Println("retry fail:", err)
+						return err
+					}
+					listen, err2 := net.Listen("unix", address)
+					if err2 != nil {
+						return err
+					}
+					listener = listen
+				} else {
+					return err
+				}
+			} else {
+				return err
+			}
+			if conn != nil {
+				conn.Close()
+			}
+		} else {
+			return err
+		}
 	}
 	defer listener.Close()
 
@@ -95,34 +62,4 @@ func (s *Server) Start(address string, cron *core.Manager) error {
 		return err
 	}
 	return nil
-}
-
-type HFunc = func(w http.ResponseWriter, req *http.Request)
-type MyHandler struct {
-	routes map[string]HFunc
-}
-
-func (h *MyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	mo.Debugf("%s %s", req.Method, req.URL.String())
-	fn, ok := h.routes[fmt.Sprintf("%s %s", req.Method, req.URL.Path)]
-	if ok {
-		fn(w, req)
-		return
-	}
-	w.WriteHeader(http.StatusNotFound)
-	w.Write([]byte("404 Not Found\n"))
-}
-
-func (h *MyHandler) Get(path string, fn HFunc) {
-	if h.routes == nil {
-		h.routes = make(map[string]HFunc)
-	}
-	h.routes[fmt.Sprintf("GET %s", path)] = fn
-}
-
-func (h *MyHandler) Post(path string, fn HFunc) {
-	if h.routes == nil {
-		h.routes = make(map[string]HFunc)
-	}
-	h.routes[fmt.Sprintf("POST %s", path)] = fn
 }
